@@ -542,8 +542,12 @@ if(args.instance):
     print(_("Validating instance-uri {}.").format(args.instance[0]))
     print(_("Note: This tool uses your operating systems keyring to store your sensitive authentication data.\nYou may be asked for your keyring passord or to set one."))
     if(validators.url(args.instance[0])):
+        if(config.yamlconfig['appkey'] == 'changeme'):
+            print(_("You must change the application key from the default in config.py."))
         
-        config.yamlconfig['instance'] = args.instance[0]
+            sys.exit()
+        config.yamlcon
+        fig['instance'] = args.instance[0]
         #config.yamlconfig['bearer'] = args.instance[1]        
         rpConfig.setsecure('bearer',args.instance[1])
         
