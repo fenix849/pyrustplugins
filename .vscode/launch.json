@@ -1,0 +1,20 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            //"args": ["--sadd","a532632e"]
+            "args": ["--smanage","a532632e","--umod","StackSizeController.cs"]
+            //"args": ["--sremove","a532632e"]
+            //"args": ["--list-available"]
+            //"args" : ["--instance","https://pterodactyl.f3n.org","BUl58mV1jdqfpRZSBiuxGpPQ7h85pSeFfNLmUUQmbdYnkjiw"]
+        }
+    ]
+}
