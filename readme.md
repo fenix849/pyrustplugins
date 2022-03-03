@@ -27,4 +27,4 @@ python3 -m pip install -r requirements.txt
 You should now edit config.py and set your appkey, you can also customize cache directoty, log and config files if desired.
 For the next step You will need your pterodactyl instance_uri and api bearer the latter of which is generated from <instance_uri>/account/api.
 ```
-python3 rustplugins.py -i 
+python3 rustplugins.py -i <instance_uri> <apibearer>
