@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-from cgi import test
-from distutils.log import debug
-from operator import truediv
 from pydactyl import PterodactylClient
 from pathlib import Path
 from tqdm import tqdm
