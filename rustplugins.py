@@ -2,9 +2,10 @@
 from pydactyl import PterodactylClient
 from pathlib import Path
 from tqdm import tqdm
-from urllib.parse import urlparse
+from urllib import parse
+
+
 from config import *
-import getpass
 import requests
 import logging
 #import paramiko
@@ -106,18 +107,17 @@ class rpServer:
 
         if os.path.exists(file):            
             files = {'files': open(file, 'rb')}
-                
-        uploadheaders = {'Content-Type': 'application/octet-stream'}
+                        
         r = requests.post(posturi, files=files)
-                         
+                        
         if not r.ok:
-            self.logger.debug(_("Error in {}.".format(__name__)))                          
+            self.logger.debug(_("Error in {}.".format(self.file_upload.__qualname__)))                          
             self.logger.debug(_("Req Uri: {}".format(r.request.url)))
             self.logger.debug(_("Req Headers: {}".format(r.request.headers)))
             self.logger.debug(_("Req Body: {}".format(r.request.body)))
             self.logger.debug(_("Resp Status: {}".format(str(r.status_code))))
             self.logger.debug(_("Resp Text: {}".format(r.text)))
-      
+    
 
         return r
 
@@ -142,7 +142,7 @@ class rpServer:
         r = requests.put(uri, json=payload, headers=headers)
 
         if not r.ok:
-            self.logger.debug(_("Error in {}.".format(__name__)))                          
+            self.logger.debug(_("Error in {}.".format(self.file_rename.__qualname__)))                          
             self.logger.debug(_("Req Uri: {}".format(r.request.url)))
             self.logger.debug(_("Req Headers: {}".format(r.request.headers)))
             self.logger.debug(_("Req Body: {}".format(r.request.body)))
@@ -169,7 +169,7 @@ class rpServer:
         r = requests.get(uri, headers=headers, params=params)        
 
         if not r.ok:
-            self.logger.debug(_("Error in {}.".format(__name__)))                          
+            self.logger.debug(_("Error in {}.".format(self.file_details.__qualname__)))                          
             self.logger.debug(_("Req Uri: {}".format(r.request.url)))
             self.logger.debug(_("Req Headers: {}".format(r.request.headers)))
             self.logger.debug(_("Req Body: {}".format(r.request.body)))
@@ -292,7 +292,7 @@ class rpServer:
         else:
             self.logger.info(_("Umod plugin {} successfully loaded on server you may need to issue, but you will need to issue oxide.reload {} as we weren't able to.".format(pluginfilename,args.umod)))
 
-    def pluginexists(self, connection:rpConnection, remotepath:str) -> bool:
+    def pluginexistsremote(self, connection:rpConnection, remotepath:str) -> bool:
         if remotepath:
             res,resp = self.file_detail(connection,remotepath)
             if res:
@@ -305,20 +305,38 @@ class rpServer:
     def pluginadd(self, origin:str, localpath:str, remotepath:str):
         localname = os.path.split(localpath)[1]
         if self.pluginlist:
-            self.pluginlist[localname] = {'origin':origin,'local':localpath, 'remote':remotepath}
+            self.pluginlist[localname] = {'origin':origin,'local':localpath, 'remote':remotepath, 'cached':False}
             return localname
         else:
-            self.pluginlist = {localname: {'origin':origin,'local':localpath, 'remote':remotepath}}
-            return localname                               
+            self.pluginlist = {localname: {'origin':origin,'local':localpath, 'remote':remotepath, 'cached':False}}
+            return localname
+    
+    def pluginremove(self, connection:rpConnection, localname:str, deleteremote:bool):
+        if self.pluginlist:
+            if localname in self.pluginlist:
+                if deleteremote:
+                    self.file_delete(self.pluginlist[localname]['remote'])
+                self.pluginlist.pop(localname)
 
-    def pluginupload(self, connection:rpConnection, localpath:str, remotepath:str, overwrite:bool):
-        ok = False
-        
-        errors = []
+
+    def pluginupload(self, connection:rpConnection, localname:str, overwrite:bool):
+        ok = False        
+        errors = []        
+        if localname in self.pluginlist:
+            if not self.pluginlist[localname]['cached'] == True:
+                errors.append(_("Cannot upload a plugin which has not yet been cached."))
+                return ok, errors
+            localpath = self.pluginlist[localname]['local']
+            remotepath = self.pluginlist[localname]['remote']
+        else:
+                errors.append(_("{} is unknown and not maintained."))
+                return ok, errors
+
+
         localname = os.path.split(localpath)[1]                          
         uploadresp = self.file_upload(connection,localpath)
         if not uploadresp.ok:
-            errors.append((_("File upload failed with {}\n".format(uploadresp.text))))
+            errors.append(_("File upload failed with {}\n".format(uploadresp.text)))
         else:
             self.logger.info(_("Uploaded to instance, moving..."))
             renameresp = self.file_rename(connection,localname, remotepath)                                            
@@ -348,10 +366,41 @@ class rpServer:
                 self.pluginreload(connection, localname)
                 return ok, errors
             return ok, errors
+    
+    def plugindownload(self, localname):        
+        ok = False        
+        errors = []
+        if localname in self.pluginlist:
+                localpath = self.pluginlist[localname]['local']
+                origin = self.pluginlist[localname]['origin']
+        else:
+                errors.append(_("{} is unknown and not maintained."))
+                return ok, errors             
+        
+        try:
+            response = requests.get(origin, stream=True)
+            response.raise_for_status()
+            total_size_in_bytes= int(response.headers.get('content-length', 0))
+            block_size = 1024 #1 Kibibyte
+            progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
+            with open(localpath, 'wb') as file:
+                for data in response.iter_content(block_size):
+                    progress_bar.update(len(data))
+                    file.write(data)
+                file.close()
+            progress_bar.close()
+            if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
+                errors.append(_("Unexpected remaining bytes during download."))                
+            else:
+                ok = True                
+                self.pluginlist[localname]['cached'] = True
+        except requests.exceptions.RequestException as e:
+            errors.append(e.strerror)
+
+        return ok, errors
 
     def __repr__(self):
         return "{}({})".format(self.__class__.__name__,self.identifier)
-
 
 
         
@@ -404,27 +453,27 @@ class rpConfig:
 
 class rpUtil:
 
-    def https_download_file(url,destpath):        
-        # Streaming, so we can iterate over the response.
-        filename = os.path.basename(urlparse(url).path)
-        try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            total_size_in_bytes= int(response.headers.get('content-length', 0))
-            block_size = 1024 #1 Kibibyte
-            progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
-            with open(os.path.join(destpath,filename), 'wb') as file:
-                for data in response.iter_content(block_size):
-                    progress_bar.update(len(data))
-                    file.write(data)
-                file.close()
-            progress_bar.close()
-            if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
-                print("ERROR, something went wrong")
-            else:
-                return True
-        except requests.exceptions.RequestException as e:
-            return e
+    # def https_download_file(url,destpath):        
+    #     # Streaming, so we can iterate over the response.
+    #     filename = os.path.basename(urlparse(url).path)
+    #     try:
+    #         response = requests.get(url, stream=True)
+    #         response.raise_for_status()
+    #         total_size_in_bytes= int(response.headers.get('content-length', 0))
+    #         block_size = 1024 #1 Kibibyte
+    #         progress_bar = tqdm(total=total_size_in_bytes, unit='iB', unit_scale=True)
+    #         with open(os.path.join(destpath,filename), 'wb') as file:
+    #             for data in response.iter_content(block_size):
+    #                 progress_bar.update(len(data))
+    #                 file.write(data)
+    #             file.close()
+    #         progress_bar.close()
+    #         if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
+    #             print("ERROR, something went wrong")
+    #         else:
+    #             return True
+    #     except requests.exceptions.RequestException as e:
+    #         return e
     
     def file_isnt_zero(filepath:str):
             if os.path.isfile(filepath):
@@ -455,12 +504,12 @@ parser.add_argument('-v','--verbose', action='store_true', help=_('Verbose mode.
 
 group = parser.add_mutually_exclusive_group()
 group.add_argument('-l','--list', action='store_true', help=_('List maintained plugins.'))
-group.add_argument('-u','--umod', metavar='umod-fikename', help=_('Install and Maintain Umod Plugin.'))
+group.add_argument('-u','--umod', metavar='umod-filename', help=_('Install and Maintain Umod Plugin.'))
 group.add_argument('-g','--gen', nargs=2, metavar=('gen-filename','gen-url'), help=_('Install and Maintain Generic Plugin.'))
-group.add_argument('-p','--update', action='store_true', help=_('Update currently maintained plugins, Individual plugin if name specified.'))
-#group.add_argument('-d','--individual', metavar='filename', help=_('Update individual plugin.'))
+group.add_argument('-p','--update', action='store_true', help=_('Update currently maintained plugins.'))
+group.add_argument('-d','--individual', metavar='filename', help=_('Update individual plugin.'))
 group.add_argument('-r', '--remove', help=_('Remove currently maintained plugin.'))
-group.add_argument('-f', '--ftpauth', metavar='ftp-user', help=_('Set FTP Authentication Details prompting for password.'))
+#group.add_argument('-f', '--ftpauth', metavar='ftp-user', help=_('Set FTP Authentication Details prompting for password.'))
 args = parser.parse_args()
 
 
@@ -549,8 +598,7 @@ if(args.instance):
         if(appkey == 'changeme'):
             print(_("You must change the application key from the default in config.py."))        
             sys.exit()
-        config.yamlcon
-        fig['instance'] = args.instance[0]
+        config.yamlconfig['instance'] = args.instance[0]
         #config.yamlconfig['bearer'] = args.instance[1]        
         rpConfig.setsecure('bearer',args.instance[1])
         
@@ -663,8 +711,8 @@ if(args.smanage):
     print(_('{} - Manage Server({}):').format(appfile,args.smanage))
     e = basecon.server_exists(args.smanage)
     if e == True:        
-        if(not args.umod and not args.gen and not args.update and not args.remove and not args.ftpauth):
-            print(_("Option {} requires one of {}").format('--smanage','--umod/--gen/--update/--remove'))
+        if(not args.umod and not args.gen and not args.update and not args.individual and not args.remove):
+            print(_("Option {} requires one of {}").format('--smanage','--umod/--gen/--update/--individual/--remove'))
         else:
             if(args.umod):
                 print(_('Confirming server {} details... ').format(args.smanage))
@@ -672,56 +720,34 @@ if(args.smanage):
                     server = config.server_getmanaged(args.smanage)
                     server.fetch(basecon)
                     if server.state == 'running':
-                        print(_("Downloading Umod Plugin {}...").format(args.umod))
-                        dlresp = rpUtil.https_download_file(umodbase + args.umod, cachedir) 
-                        if dlresp:
-                            filepath = os.path.join(cachedir,args.umod)                            
-                            if rpUtil.file_isnt_zero(filepath):                                                                
-                                    print(_("Uploading Umod Plugin {}...").format(args.umod))                                    
-                                    ox = config.yamlconfig['remoteoxideplugins']                                    
-                                    if(ox):
-                                        remotepath = "{}/{}".format(ox,args.umod)
-                                        if not server.pluginexists(basecon,remotepath):
-                                            server.pluginupload(basecon, filepath, remotepath, False)
-                                        else:
-                                            details,resp = server.file_detail(basecon,remotepath)
-                                            deleteresp = input(_("File {} already exists at destination with size {} and modify data {}, delete(y/n)?".format(args.umod, details['size'], details['modified_at'])))
-                                            if deleteresp in ["Y","y","Yes","yes"]:
-                                                ok, err = server.pluginupload(basecon, filepath, remotepath, True)
-                                                if not ok:
-                                                    for e in err:
-                                                        print(e)
+                        print(_("Adding Umod Plugin to configuration {}...").format(args.umod))
+                        ox = config.yamlconfig['remoteoxideplugins']     
+                        rpath = "{}/{}".format(ox,args.umod)
+                        lpath = os.path.join(cachedir,args.umod)                                
+                        if(ox):
+                            server.pluginadd(parse.urljoin(umodbase, args.umod), lpath, rpath)
+                            print(_("Downloading Umod Plugin {}...").format(args.umod))
+                            ok, derr = server.plugindownload(args.umod) 
+                            if ok:                                                        
+                                if rpUtil.file_isnt_zero(lpath):                                                                
+                                    print(_("Uploading Umod Plugin {}...").format(args.umod))                                        
+                                    if not server.pluginexistsremote(basecon,rpath):
+                                        server.pluginupload(basecon, args.umod, False)
+                                    else:
+                                        details,resp = server.file_detail(basecon,rpath)
+                                        deleteresp = input(_("File {} already exists at destination with size {} and modify data {}, delete(y/n)?".format(args.umod, details['size'], details['modified_at'])))
+                                        if deleteresp in ["Y","y","Yes","yes"]:
+                                            ok, uerr = server.pluginupload(basecon, args.umod, True)
+                                            if not ok:
+                                                for ue in uerr:
+                                                    print(ue)
 
-
-                                        #region - moved to rpServer.uploadplugin  
-                                        # uploadresp = server.file_upload(basecon,filepath)
-                                        # if not uploadresp.ok:
-                                        #     logger.error(_("File upload failed with {}".format(uploadresp.text)))
-                                        # else:
-                                        #     renameresp = server.file_rename(basecon, args.umod, "{}/{}".format(ox,args.umod))                                            
-                                        #     if(not renameresp.ok):                                                                                        
-                                        #         if renameresp.json():
-                                        #             errdetail = renameresp.json()['errors'][0]['detail']                                            
-                                        #             if "Cannot move or rename file, destination already exists" in errdetail:
-                                        #                 details = server.file_detail(basecon, "{}/{}".format(ox,args.umod))
-                                        #                 if 'size' in details and 'modified_at' in details:
-                                        #                     deleteresp = input(_("File {} already exists at destination with size {} and modify data {}, delete(y/n)?".format(args.umod, details['size'], details['modified_at'])))
-                                        #                     if deleteresp in ["y","Y","Yes","YES"]:
-                                        #                         server.file_delete(basecon,  "{}/{}".format(ox,args.umod))
-                                        #                         renameresp = server.file_rename(basecon, args.umod, "{}/{}".format(ox,args.umod))                                            
-                                        #                         if(not renameresp.ok):
-                                        #                             logger.error(_("We deleted {} however the move still failing with {}, Detail: {}.".format(args.umod,renameresp.text, errdetail)))
-                                        #                         else:
-                                        #                             rpUtil.pluginreload(basecon,server, logger, args.umod)
-                                        #             else:
-                                        #                 logger.error(_("File move failed with {}, Detail: {}.".format(renameresp.text, errdetail)))
-                                        #     else:
-                                        #         rpUtil.pluginreload(basecon,server, logger, args.umod)
-                                        #endregion
+                                else:
+                                    print(_("File download appeared successful however the resulting file is empty, Check {}".format(lpath)))
                             else:
-                                print(_("File download appeared successful however the resulting file is empty, Check {}".format(filepath)))
-                        else:
-                            print(_("Downloading {} from {} failed, {}".format(args.umod, umodbase, d.strerror)))    
+                                print(_("Downloading {} from {} failed.").format(args.umod, umodbase))
+                                for de in derr:
+                                    print(_("Error {}".format(de)))    
 
                     else:
                         print(_("Server {} is not running. The server must be running for this operation.").format(args.smanage)) 
@@ -733,19 +759,19 @@ if(args.smanage):
                 print(_('update'))
             if(args.remove):
                 print (_('remove'))
-            if(args.ftpauth):
-                p = getpass.getpass(prompt=_("SFTP Password:"))
-                server = config.server_getmanaged(args.smanage)
-                server.fetch(basecon)
-                server.sftp_set_auth(args.ftpauth)                
-                if server.sftp_check_auth(appname,basecon,p):              
-                    rpConfig.setsecure("ftp_"+args.ftpauth,p)
-                    print(_('Successfully Authenticated {}').format(args.ftpauth))
-                    print(_('Writing configuration to {}...').format(str(configfile)), end='')
-                    config.write_config(configfile)
-                    print(_("...done"))
-                else:
-                    print(_('Failure Authenticating {}').format(args.ftpauth))
+            # if(args.ftpauth):
+            #     p = getpass.getpass(prompt=_("SFTP Password:"))
+            #     server = config.server_getmanaged(args.smanage)
+            #     server.fetch(basecon)
+            #     server.sftp_set_auth(args.ftpauth)                
+            #     if server.sftp_check_auth(appname,basecon,p):              
+            #         rpConfig.setsecure("ftp_"+args.ftpauth,p)
+            #         print(_('Successfully Authenticated {}').format(args.ftpauth))
+            #         print(_('Writing configuration to {}...').format(str(configfile)), end='')
+            #         config.write_config(configfile)
+            #         print(_("...done"))
+            #     else:
+            #         print(_('Failure Authenticating {}').format(args.ftpauth))
 
                 
     else:
