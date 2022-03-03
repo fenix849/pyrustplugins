@@ -2,8 +2,6 @@
 from cgi import test
 from distutils.log import debug
 from operator import truediv
-from telnetlib import NOP
-from tkinter import FALSE, Y
 from pydactyl import PterodactylClient
 from pathlib import Path
 from tqdm import tqdm
@@ -307,8 +305,16 @@ class rpServer:
         else:
             return False
 
+    def pluginadd(self, origin:str, localpath:str, remotepath:str):
+        localname = os.path.split(localpath)[1]
+        if self.pluginlist:
+            self.pluginlist[localname] = {'origin':origin,'local':localpath, 'remote':remotepath}
+            return localname
+        else:
+            self.pluginlist = {localname: {'origin':origin,'local':localpath, 'remote':remotepath}}
+            return localname                               
 
-    def uploadplugin(self, connection:rpConnection, localpath:str, remotepath:str, overwrite:bool):
+    def pluginupload(self, connection:rpConnection, localpath:str, remotepath:str, overwrite:bool):
         ok = False
         
         errors = []
@@ -332,6 +338,7 @@ class rpServer:
                                     self.logger.info(_("Move success, reloading..."))
                                     self.pluginreload(connection, localname)
                                     ok = True
+
                                     return ok, errors                                    
                             else:
                                 errors.append("PLugin exists but overwrite is not true, skipping.")
@@ -542,9 +549,8 @@ if(args.instance):
     print(_("Validating instance-uri {}.").format(args.instance[0]))
     print(_("Note: This tool uses your operating systems keyring to store your sensitive authentication data.\nYou may be asked for your keyring passord or to set one."))
     if(validators.url(args.instance[0])):
-        if(config.yamlconfig['appkey'] == 'changeme'):
-            print(_("You must change the application key from the default in config.py."))
-        
+        if(appkey == 'changeme'):
+            print(_("You must change the application key from the default in config.py."))        
             sys.exit()
         config.yamlcon
         fig['instance'] = args.instance[0]
@@ -574,12 +580,14 @@ if(args.list_available):
     if not basecon.check() == True:
         basecon = rpConnection(config.yamlconfig['instance'], rpConfig.getsecure('bearer'))    
     print(_('{} - Available Servers:').format(appfile))
-    client_servers = basecon.get_client().client.list_servers().data['data']    
-    for server in client_servers:
+    #logger.debug(basecon.get_client().client.servers.list_servers().data)
+    client_servers = basecon.get_client().client.servers.list_servers().data
+    for server in client_servers:        
         cs_attr = server['attributes']
-        server_util = basecon.get_client().client.get_server_utilization(cs_attr['identifier'])
-        #print(server_util['current_state'])    
-        print(_('Server ID:{}\tName:{}\tManage Command: {} --sadd {}').format(cs_attr["identifier"],cs_attr["name"],appfile,cs_attr["identifier"]))
+        if 'core:rust' in cs_attr['docker_image']:
+            server_util = basecon.get_client().client.servers.get_server_utilization(cs_attr['identifier'])
+            if 'running' in server_util['current_state']:  
+                print(_('Server ID:{}\tName:{}\tManage Command: {} --sadd {}').format(cs_attr["identifier"],cs_attr["name"],appfile,cs_attr["identifier"]))
 
 if(args.sadd):
     if not basecon.check() == True:
@@ -677,12 +685,12 @@ if(args.smanage):
                                     if(ox):
                                         remotepath = "{}/{}".format(ox,args.umod)
                                         if not server.pluginexists(basecon,remotepath):
-                                            server.uploadplugin(basecon, filepath, remotepath, False)
+                                            server.pluginupload(basecon, filepath, remotepath, False)
                                         else:
                                             details,resp = server.file_detail(basecon,remotepath)
                                             deleteresp = input(_("File {} already exists at destination with size {} and modify data {}, delete(y/n)?".format(args.umod, details['size'], details['modified_at'])))
                                             if deleteresp in ["Y","y","Yes","yes"]:
-                                                ok, err = server.uploadplugin(basecon, filepath, remotepath, True)
+                                                ok, err = server.pluginupload(basecon, filepath, remotepath, True)
                                                 if not ok:
                                                     for e in err:
                                                         print(e)
@@ -747,6 +755,6 @@ if(args.smanage):
         parser.error(_("Specified server does not exist in pterodactyl.\nDetail: {}").format(e))     
 
 
-#parser.print_help()
-#if(args.update):
-#print(yaml.dump(config.yamlconfig))
+if len(sys.argv) == 1:
+    parser.error(_("No operations specified. Expecting one of (--instance/--show-instance/--list-available/--sadd/--sremove/--smanage)"))
+    
