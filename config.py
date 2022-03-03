@@ -1,7 +1,7 @@
 #Configurable Variables
 #appkey - change this before working with rustplugins.py
 appkey = 'changeme'
-#umodbaseurl
+
 #umodbase - base url for umod plugin downloads.
 umodbase = 'https://umod.org/plugins/'
 #configname - Filename or absolute path, filename defaults to location of rustplugins.py
