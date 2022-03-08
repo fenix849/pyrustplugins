@@ -3,7 +3,7 @@ from pydactyl import PterodactylClient
 from pathlib import Path
 from tqdm import tqdm
 from urllib import parse
-
+from fake_useragent import UserAgent
 
 from config import *
 import requests
@@ -370,15 +370,19 @@ class rpServer:
     def plugindownload(self, localname):        
         ok = False        
         errors = []
+        ua = UserAgent()
         if localname in self.pluginlist:
                 localpath = self.pluginlist[localname]['local']
                 origin = self.pluginlist[localname]['origin']
-        else:
-                errors.append(_("{} is unknown and not maintained."))
+        else:   
+                self.logger.debug(_("{} is unknown and not maintained.".format(localname)))
+                errors.append(_("{} is unknown and not maintained.".format(localname)))
                 return ok, errors             
         
         try:
-            response = requests.get(origin, stream=True)
+            headers = {'User-Agent': ua.chrome}
+            self.logger.debug("origin: {}".format(origin))
+            response = requests.get(origin, stream=True,headers=headers)
             response.raise_for_status()
             total_size_in_bytes= int(response.headers.get('content-length', 0))
             block_size = 1024 #1 Kibibyte
@@ -391,12 +395,13 @@ class rpServer:
             progress_bar.close()
             if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
                 errors.append(_("Unexpected remaining bytes during download."))                
+                self.logger.debug(_("Unexpected remaining bytes during download.")) 
             else:
                 ok = True                
                 self.pluginlist[localname]['cached'] = True
         except requests.exceptions.RequestException as e:
-            errors.append(e.strerror)
-
+            errors.append("request exception: {}".format(e))
+            self.logger.debug("request exception: {}".format(e))
         return ok, errors
 
     def __repr__(self):
@@ -754,7 +759,44 @@ if(args.smanage):
                 else:
                     print(_("Server {} is not managed by {}").format(args.smanage,appfile))
             if(args.gen):
-                print(_('gen'))
+                print(_('Confirming server {} details... ').format(args.smanage))
+                if config.server_ismanaged(args.smanage):                     
+                    server = config.server_getmanaged(args.smanage)
+                    server.fetch(basecon)
+                    if server.state == 'running':
+                        print(_("Adding Generic Plugin to configuration {}...").format(args.gen[0]))
+                        ox = config.yamlconfig['remoteoxideplugins']     
+                        rpath = "{}/{}".format(ox,args.gen[0])
+                        lpath = os.path.join(cachedir,args.gen[0])                                
+                        if(ox and validators.url(args.gen[1])):
+                            server.pluginadd(args.gen[1], lpath, rpath)
+                            print(_("Downloading Generic Plugin {}...").format(args.gen[0]))
+                            ok, derr = server.plugindownload(args.gen[0]) 
+                            if ok:                                                        
+                                if rpUtil.file_isnt_zero(lpath):                                                                
+                                    print(_("Uploading Generic Plugin {}...").format(args.gen[0]))                                        
+                                    if not server.pluginexistsremote(basecon,rpath):
+                                        server.pluginupload(basecon, args.gen[0], False)
+                                    else:
+                                        details,resp = server.file_detail(basecon,rpath)
+                                        deleteresp = input(_("File {} already exists at destination with size {} and modify data {}, delete(y/n)?".format(args.gen[0], details['size'], details['modified_at'])))
+                                        if deleteresp in ["Y","y","Yes","yes"]:
+                                            ok, uerr = server.pluginupload(basecon, args.gen[0], True)
+                                            if not ok:
+                                                for ue in uerr:
+                                                    print(ue)
+
+                                else:
+                                    print(_("File download appeared successful however the resulting file is empty, Check {}".format(lpath)))
+                            else:
+                                print(_("Downloading {} from {} failed.").format(args.gen[0], args.gen[1]))
+                                for de in derr:
+                                    print(_("Error {}".format(de)))    
+
+                    else:
+                        print(_("Server {} is not running. The server must be running for this operation.").format(args.smanage)) 
+                else:
+                    print(_("Server {} is not managed by {}").format(args.smanage,appfile))
             if(args.update):
                 print(_('update'))
             if(args.remove):
